@@ -6,8 +6,12 @@ import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
 import android.view.View;
 import android.view.Window;
+import android.webkit.CookieManager;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -44,7 +48,14 @@ public class MainActivity extends Activity {
     private static final ExecutorService WORK = Executors.newSingleThreadExecutor();
     private static final NhkClient NHK = new NhkClient();
 
+    /** When the hidden browser last signed in to NHK (per app process). */
+    private static long signedInAt = 0;
+    private static final long SESSION_MS = 60 * 60 * 1000;
+
+    private final Handler handler = new Handler(Looper.getMainLooper());
     private WebView web;
+    private WebView authWeb;
+    private Runnable afterSignIn;
     private String shownDate = null;
     private boolean readerShown = false;
     private boolean loadingShown = false;
@@ -104,6 +115,9 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        handler.removeCallbacksAndMessages(null);
+        if (authWeb != null) authWeb.destroy();
+        authWeb = null;
         if (web != null) web.destroy();
         web = null;
         super.onDestroy();
@@ -120,12 +134,13 @@ public class MainActivity extends Activity {
 
         if (isReady(today)) {
             showArticle(today);
-            WORK.submit(() -> prepareQuietly(tomorrow));
+            signInThen(() -> WORK.submit(() -> prepareQuietly(tomorrow)));
             return;
         }
 
         showLoading();
-        WORK.submit(() -> {
+        progress(0.08f, "NHKに接続しています", "Connecting to NHK");
+        signInThen(() -> WORK.submit(() -> {
             try {
                 prepare(today, this::progress);
                 runOnUiThread(() -> {
@@ -137,13 +152,74 @@ public class MainActivity extends Activity {
                     if (alive() && today.equals(shownDate)) showError(e);
                 });
             }
-        });
+        }));
     }
+
+    // ---- NHK sign-in in a hidden browser --------------------------------------
+
+    /**
+     * Opens NHK's "abroad" sign-in link in an invisible WebView (a real
+     * browser, so any script in the sign-in runs), then hands the resulting
+     * cookies to the downloader. Skipped if we signed in within the hour.
+     */
+    @SuppressLint("SetJavaScriptEnabled")
+    private void signInThen(Runnable next) {
+        if (SystemClock.elapsedRealtime() - signedInAt < SESSION_MS && signedInAt != 0) {
+            next.run();
+            return;
+        }
+        if (afterSignIn != null) { // a sign-in is already running: chain onto it
+            Runnable prev = afterSignIn;
+            afterSignIn = () -> { prev.run(); next.run(); };
+            return;
+        }
+        afterSignIn = next;
+        if (authWeb == null) {
+            authWeb = new WebView(this);
+            WebSettings s = authWeb.getSettings();
+            s.setJavaScriptEnabled(true);
+            s.setDomStorageEnabled(true);
+            s.setUserAgentString(s.getUserAgentString().replace("; wv", ""));
+            CookieManager.getInstance().setAcceptCookie(true);
+            CookieManager.getInstance().setAcceptThirdPartyCookies(authWeb, true);
+            authWeb.setWebViewClient(new WebViewClient() {
+                @Override
+                public void onPageFinished(WebView v, String url) {
+                    if (url != null && url.startsWith(NhkClient.EASY)) {
+                        // Landed back on NHK Easy: signed in. Give its script a moment.
+                        handler.removeCallbacks(finishSignIn);
+                        handler.postDelayed(finishSignIn, 800);
+                    }
+                }
+            });
+        }
+        authWeb.loadUrl(NhkClient.authUrl);
+        handler.postDelayed(finishSignIn, 25000); // carry on regardless after 25s
+    }
+
+    private final Runnable finishSignIn = new Runnable() {
+        @Override
+        public void run() {
+            handler.removeCallbacks(this);
+            Runnable next = afterSignIn;
+            afterSignIn = null;
+            if (next == null) return;
+            CookieManager cm = CookieManager.getInstance();
+            cm.flush();
+            String cookies = cm.getCookie(NhkClient.EASY);
+            if (cookies != null && !cookies.isEmpty()) {
+                NHK.useBrowserCookies(cookies);
+                signedInAt = SystemClock.elapsedRealtime();
+            }
+            if (authWeb != null) authWeb.loadUrl("about:blank");
+            next.run();
+        }
+    };
 
     /** Gets the article for a date into its folder, unless it's already there. Runs on WORK. */
     private void prepare(String date, NhkClient.Progress p) throws Exception {
         if (isReady(date)) return;
-        p.step(0.08f, "NHKに接続しています", "Connecting to NHK");
+        p.step(0.18f, "記事の一覧を取得しています", "Getting the list of articles");
         List<NhkClient.Item> items;
         try {
             items = NHK.list();
@@ -226,6 +302,7 @@ public class MainActivity extends Activity {
     private void showError(Exception e) {
         loadingShown = false;
         shownDate = null; // try again next time the app is opened
+        signedInAt = 0;   // and sign in to NHK afresh
         web.loadDataWithBaseURL(null, Pages.error(isDark(), RETRY, describe(e)),
                 "text/html", "UTF-8", null);
     }
