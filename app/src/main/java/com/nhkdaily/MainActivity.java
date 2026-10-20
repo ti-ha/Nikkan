@@ -8,47 +8,68 @@ import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.View;
 import android.view.Window;
+import android.webkit.CookieManager;
+import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import org.json.JSONTokener;
+
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashSet;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Random;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * One screen, no controls: today's NHK Easy article in a clean reader view.
  * Same article all day, a new random (unseen) one each day.
+ *
+ * NHK Easy now lives on NHK ONE, whose article list needs a session token,
+ * so instead of calling an API we load NHK's own pages in the WebView, read
+ * the article links off the page, then reformat the chosen article.
+ * The first time, NHK ONE shows a one-off terms screen: we show it and wait.
  */
 public class MainActivity extends Activity {
 
-    private static final String BASE = "https://www3.nhk.or.jp/news/easy/";
-    private static final String[] FEEDS = {
-            BASE + "news-list.json",
-            BASE + "top-list.json",
-    };
-    private static final Pattern NEWS_ID =
-            Pattern.compile("\"news_id\"\\s*:\\s*\"([A-Za-z0-9]+)\"");
+    private static final String LIST_URL = "https://news.web.nhk/news/easy/list/";
+    private static final String TOP_URL = "https://news.web.nhk/news/easy/";
+
+    private static final String GATE_TEST =
+            "/内容について確認しました|サービスを利用しない|地域\\(放送局\\)/.test(document.body ? document.body.innerText : '')";
+
+    /** Returns {gate: bool, links: [article urls]} for the current page. */
+    private static final String LINKS_JS = """
+        (function(){
+          var out = {};
+          document.querySelectorAll('a[href]').forEach(function(a){
+            var h = a.href.split('#')[0].split('?')[0];
+            var i = h.indexOf('/news/easy/');
+            if (i < 0) return;
+            var rest = h.substring(i + 11);
+            if (!rest || /^(list|ogp|about|index|help|faq)/i.test(rest)) return;
+            if (/\\.html$/.test(rest) || /^[A-Za-z]{0,4}\\d{6,}/.test(rest)) out[h] = 1;
+          });
+          return JSON.stringify({gate: GATE, links: Object.keys(out)});
+        })()
+        """.replace("GATE", GATE_TEST);
 
     /** Pulls the article out of NHK's page and replaces the page with a reader layout. */
     private static final String READER_JS = """
         (function(dark, furi){
           if (document.body && document.body.dataset.reader === '1') return 'ok';
+          var tx = document.body ? document.body.innerText : '';
+          if (/内容について確認しました|サービスを利用しない|地域\(放送局\)/.test(tx)) return 'gate';
           var sels = ['#js-article-body', '.article-main__body', '.article-body',
                       'article .body', '[class*="article"][class*="body"]', 'article', 'main'];
           var body = null;
@@ -123,10 +144,18 @@ public class MainActivity extends Activity {
         })
         """;
 
+    private enum Mode { IDLE, PICK_LIST, PICK_TOP, READ }
+
     private WebView web;
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Random random = new Random();
+    private Mode mode = Mode.IDLE;
     private String shownDate = null;
-    private int attempts = 0;
+    private String articleUrl = null;
+    private boolean readerShown = false;
+    private boolean sawGate = false;
+    private long phaseStart = 0;
+    private int readerTries = 0;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -134,13 +163,12 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
 
-        int bg = isDark() ? Color.parseColor("#16161a") : Color.parseColor("#faf8f3");
+        int bg = bgColor();
         getWindow().getDecorView().setBackgroundColor(bg);
         getWindow().setStatusBarColor(bg);
         getWindow().setNavigationBarColor(bg);
         if (!isDark()) {
-            getWindow().getDecorView().setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
         }
 
         web = new WebView(this);
@@ -150,20 +178,31 @@ public class MainActivity extends Activity {
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
         s.setUserAgentString(s.getUserAgentString().replace("; wv", ""));
+        CookieManager.getInstance().setAcceptCookie(true);
+        CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
+
         web.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
-                // Stay on the article: ignore any link taps.
-                return r.isForMainFrame() && r.hasGesture();
+                // Once the article is showing, ignore link taps. Before that
+                // (e.g. NHK's terms screen) let navigation happen normally.
+                return readerShown && r.isForMainFrame() && r.hasGesture();
             }
 
             @Override
             public void onPageFinished(WebView v, String url) {
-                if (url.startsWith("http")) {
-                    attempts = 0;
-                    tryReader();
-                } else {
-                    web.setVisibility(View.VISIBLE);
+                if (mode == Mode.READ && !readerShown) {
+                    readerTries = 0;
+                    handler.removeCallbacks(readerLoop);
+                    handler.post(readerLoop);
+                }
+            }
+
+            @Override
+            public void onReceivedError(WebView v, WebResourceRequest r, WebResourceError e) {
+                if (r.isForMainFrame() && mode != Mode.IDLE) {
+                    fail("今日の記事を読み込めませんでした。<br>Couldn't load today's article.<br>"
+                            + "Open the app again when you're online.");
                 }
             }
         });
@@ -173,15 +212,18 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        // Loads on first open, and swaps in the new article if the app was
-        // left open overnight.
         if (!today().equals(shownDate)) {
             loadToday();
-        } else {
-            // Apply a furigana change made in settings without reloading.
+        } else if (readerShown) {
             web.evaluateJavascript("document.documentElement.classList.toggle('nofuri',"
                     + !SettingsActivity.furigana(this) + ")", null);
         }
+    }
+
+    @Override
+    protected void onPause() {
+        CookieManager.getInstance().flush(); // keep NHK's terms acceptance
+        super.onPause();
     }
 
     @Override
@@ -191,56 +233,130 @@ public class MainActivity extends Activity {
         super.onDestroy();
     }
 
-    /** NHK sometimes fills the article in with script after load, so retry briefly. */
-    private void tryReader() {
-        String js = READER_JS + "(" + isDark() + "," + SettingsActivity.furigana(this) + ")";
-        web.evaluateJavascript(js, result -> {
-            if (result != null && result.contains("ok")) {
-                web.setVisibility(View.VISIBLE);
-            } else if (++attempts < 12) {
-                handler.postDelayed(this::tryReader, 500);
-            } else {
-                web.setVisibility(View.VISIBLE); // show the page as-is rather than nothing
-            }
-        });
-    }
+    // ---- Daily flow -------------------------------------------------------
 
     private void loadToday() {
-        final String today = today();
-        shownDate = today;
+        handler.removeCallbacksAndMessages(null);
+        shownDate = today();
+        readerShown = false;
+        sawGate = false;
         web.setVisibility(View.INVISIBLE);
-        final SharedPreferences prefs = getSharedPreferences("daily", MODE_PRIVATE);
 
-        String savedUrl = prefs.getString("url", null);
-        if (savedUrl != null && today.equals(prefs.getString("date", ""))) {
-            web.loadUrl(savedUrl);
-            return;
+        SharedPreferences prefs = prefs();
+        String saved = prefs.getString("url", null);
+        if (saved != null && shownDate.equals(prefs.getString("date", ""))) {
+            read(saved);
+        } else {
+            startPick(Mode.PICK_LIST, LIST_URL);
         }
-
-        new Thread(() -> {
-            Set<String> seen = new HashSet<>(prefs.getStringSet("seen", new HashSet<>()));
-            String id = pickArticle(seen);
-            runOnUiThread(() -> {
-                if (isFinishing() || isDestroyed()) return;
-                if (id == null) {
-                    shownDate = null; // try again next time the app comes to the front
-                    showMessage("今日の記事を読み込めませんでした。<br>"
-                            + "Couldn't load today's article.<br>Open the app again when you're online.");
-                    return;
-                }
-                String url = BASE + id + "/" + id + ".html";
-                seen.add(id);
-                prefs.edit()
-                        .putString("date", today)
-                        .putString("url", url)
-                        .putStringSet("seen", seen)
-                        .apply();
-                web.loadUrl(url);
-            });
-        }).start();
     }
 
-    private void showMessage(String html) {
+    private void startPick(Mode m, String url) {
+        mode = m;
+        phaseStart = SystemClock.elapsedRealtime();
+        web.loadUrl(url);
+        handler.removeCallbacks(pickLoop);
+        handler.postDelayed(pickLoop, 800);
+    }
+
+    /** Polls the list page until article links appear (or the terms screen shows). */
+    private final Runnable pickLoop = new Runnable() {
+        @Override
+        public void run() {
+            if (mode != Mode.PICK_LIST && mode != Mode.PICK_TOP) return;
+            web.evaluateJavascript(LINKS_JS, raw -> {
+                if (mode != Mode.PICK_LIST && mode != Mode.PICK_TOP) return;
+                boolean gate = false;
+                List<String> links = new ArrayList<>();
+                try {
+                    JSONObject o = new JSONObject((String) new JSONTokener(raw).nextValue());
+                    gate = o.optBoolean("gate");
+                    JSONArray a = o.getJSONArray("links");
+                    for (int i = 0; i < a.length(); i++) links.add(a.getString(i));
+                } catch (Exception ignored) {
+                }
+
+                if (!links.isEmpty()) {
+                    choose(links);
+                    return;
+                }
+                if (gate) {
+                    // Let the user get through NHK ONE's one-off terms screen.
+                    sawGate = true;
+                    web.setVisibility(View.VISIBLE);
+                    phaseStart = SystemClock.elapsedRealtime();
+                } else if (SystemClock.elapsedRealtime() - phaseStart > 12000) {
+                    if (mode == Mode.PICK_LIST) {
+                        startPick(Mode.PICK_TOP, TOP_URL);
+                    } else {
+                        fail("記事が見つかりませんでした。<br>Couldn't find today's article.<br>"
+                                + "Try again later.");
+                    }
+                    return;
+                }
+                handler.postDelayed(this, 800);
+            });
+        }
+    };
+
+    private void choose(List<String> links) {
+        SharedPreferences prefs = prefs();
+        Set<String> seen = new HashSet<>(prefs.getStringSet("seen", new HashSet<>()));
+        List<String> fresh = new ArrayList<>();
+        for (String l : links) if (!seen.contains(l)) fresh.add(l);
+        List<String> pool = fresh.isEmpty() ? links : fresh;
+        String url = pool.get(random.nextInt(pool.size()));
+
+        seen.add(url);
+        prefs.edit()
+                .putString("date", shownDate)
+                .putString("url", url)
+                .putStringSet("seen", seen)
+                .apply();
+        read(url);
+    }
+
+    private void read(String url) {
+        mode = Mode.READ;
+        articleUrl = url;
+        readerShown = false;
+        web.setVisibility(View.INVISIBLE);
+        web.loadUrl(url);
+    }
+
+    /** NHK fills the article in with script after load, so keep trying briefly. */
+    private final Runnable readerLoop = new Runnable() {
+        @Override
+        public void run() {
+            if (mode != Mode.READ || readerShown) return;
+            String js = READER_JS + "(" + isDark() + "," + SettingsActivity.furigana(MainActivity.this) + ")";
+            web.evaluateJavascript(js, result -> {
+                if (mode != Mode.READ || readerShown) return;
+                if (result != null && result.contains("ok")) {
+                    readerShown = true;
+                    web.setVisibility(View.VISIBLE);
+                } else if (result != null && result.contains("gate")) {
+                    sawGate = true;
+                    web.setVisibility(View.VISIBLE);
+                    handler.postDelayed(this, 1000);
+                } else if (sawGate && !articleUrl.equals(web.getUrl())) {
+                    // Terms accepted and NHK sent us elsewhere: go back to the article.
+                    sawGate = false;
+                    web.setVisibility(View.INVISIBLE);
+                    web.loadUrl(articleUrl);
+                } else if (++readerTries < 16) {
+                    handler.postDelayed(this, 500);
+                } else {
+                    web.setVisibility(View.VISIBLE); // show the page as-is rather than nothing
+                }
+            });
+        }
+    };
+
+    private void fail(String html) {
+        handler.removeCallbacksAndMessages(null);
+        mode = Mode.IDLE;
+        shownDate = null; // try again next time the app comes to the front
         String fg = isDark() ? "#8a877f" : "#8a857a";
         String bg = isDark() ? "#16161a" : "#faf8f3";
         web.loadDataWithBaseURL(null,
@@ -250,43 +366,17 @@ public class MainActivity extends Activity {
                         + "text-align:center;line-height:1.8;padding:0 32px;box-sizing:border-box'>"
                         + "<div>" + html + "</div></body></html>",
                 "text/html", "UTF-8", null);
+        web.setVisibility(View.VISIBLE);
     }
 
-    private String pickArticle(Set<String> seen) {
-        for (String feed : FEEDS) {
-            try {
-                String json = fetch(feed);
-                Set<String> ids = new LinkedHashSet<>();
-                Matcher m = NEWS_ID.matcher(json);
-                while (m.find()) ids.add(m.group(1));
-                if (ids.isEmpty()) continue;
+    // ---- Helpers ----------------------------------------------------------
 
-                List<String> fresh = new ArrayList<>();
-                for (String id : ids) if (!seen.contains(id)) fresh.add(id);
-                List<String> pool = fresh.isEmpty() ? new ArrayList<>(ids) : fresh;
-                return pool.get(new Random().nextInt(pool.size()));
-            } catch (Exception ignored) {
-                // try the next feed
-            }
-        }
-        return null;
+    private SharedPreferences prefs() {
+        return getSharedPreferences("daily", MODE_PRIVATE);
     }
 
-    private static String fetch(String address) throws Exception {
-        HttpURLConnection c = (HttpURLConnection) new URL(address).openConnection();
-        c.setConnectTimeout(10000);
-        c.setReadTimeout(15000);
-        c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) NHKDaily");
-        try (InputStream in = c.getInputStream()) {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            byte[] buf = new byte[8192];
-            int n;
-            while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
-            String s = out.toString("UTF-8");
-            return s.startsWith("﻿") ? s.substring(1) : s;
-        } finally {
-            c.disconnect();
-        }
+    private int bgColor() {
+        return isDark() ? Color.parseColor("#16161a") : Color.parseColor("#faf8f3");
     }
 
     private boolean isDark() {
