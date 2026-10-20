@@ -58,7 +58,21 @@ public class NhkClient {
     }
 
     private final CookieManager cookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
-    private boolean signedIn = false;
+    private volatile boolean signedIn = false;
+    /** Cookie header captured from the in-app browser's NHK sign-in, if any. */
+    private volatile String browserCookies = null;
+
+    /**
+     * Use the session from the in-app browser. NHK's sign-in can involve
+     * script, so the app signs in with a real (hidden) browser and hands the
+     * resulting cookies over here.
+     */
+    public void useBrowserCookies(String cookieHeader) {
+        if (cookieHeader != null && !cookieHeader.trim().isEmpty()) {
+            browserCookies = cookieHeader.trim();
+            signedIn = true;
+        }
+    }
 
     // ---- HTTP with manual redirects + cookies ------------------------------
 
@@ -79,12 +93,16 @@ public class NhkClient {
             c.setRequestProperty("User-Agent", UA);
             c.setRequestProperty("Accept-Language", "ja,en;q=0.8");
             if (referer != null) c.setRequestProperty("Referer", referer);
+            List<String> jar = new ArrayList<>();
             for (Map.Entry<String, List<String>> e
                     : cookies.get(uri, new HashMap<>()).entrySet()) {
-                if (!e.getValue().isEmpty()) {
-                    c.setRequestProperty(e.getKey(), String.join("; ", e.getValue()));
-                }
+                if (e.getKey().equalsIgnoreCase("Cookie")) jar.addAll(e.getValue());
             }
+            String host = uri.getHost() == null ? "" : uri.getHost();
+            if (browserCookies != null && (host.equals("nhk") || host.endsWith(".nhk"))) {
+                jar.add(browserCookies);
+            }
+            if (!jar.isEmpty()) c.setRequestProperty("Cookie", String.join("; ", jar));
             try {
                 int code = c.getResponseCode();
                 cookies.put(uri, c.getHeaderFields());
@@ -109,8 +127,8 @@ public class NhkClient {
     private Response getSignedIn(String url, String referer) throws IOException {
         if (!signedIn) signIn();
         Response r = get(url, referer);
-        if (r.code == 401 || r.code == 403) {
-            signIn(); // session expired: sign in again once
+        if ((r.code == 401 || r.code == 403) && browserCookies == null) {
+            signIn(); // no browser session: try the plain sign-in once more
             r = get(url, referer);
         }
         return r;
@@ -130,7 +148,9 @@ public class NhkClient {
             try {
                 Response r = getSignedIn(feed, easyBase);
                 if (r.code != 200) {
-                    last = new IOException("HTTP " + r.code + " for " + feed);
+                    last = new IOException("Article list: NHK said " + r.code
+                            + (r.code == 401 ? " (not signed in)" : "")
+                            + (browserCookies == null ? " · no browser session" : ""));
                     continue;
                 }
                 String text = new String(r.body, StandardCharsets.UTF_8);
@@ -206,7 +226,7 @@ public class NhkClient {
         String url = easyBase + item.id + "/" + item.id + ".html";
         p.step(0.45f, "記事をダウンロードしています", "Downloading the article");
         Response r = getSignedIn(url, easyBase);
-        if (r.code != 200) throw new IOException("HTTP " + r.code + " for article");
+        if (r.code != 200) throw new IOException("Article page: NHK said " + r.code);
 
         Document doc = Jsoup.parse(new String(r.body, StandardCharsets.UTF_8), url);
         Element body = doc.getElementById("js-article-body");
