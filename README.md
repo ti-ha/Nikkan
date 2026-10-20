@@ -1,14 +1,11 @@
-# NHK Daily
+# Nikkan
+## 日刊 - daily article
 
-Tap the icon → today's NHK Easy article, in a clean reader view inside the app (furigana kept, follows dark mode). Same article all day; a new random one tomorrow. No screens, no settings.
+An android app that does one thing and one thing only - open the app, get a new article from NHK Easy you haven't read before. Come back the next day, it'll do it again.
 
-## Build it without a computer (GitHub, free)
-1. Create a new GitHub repo and upload everything in this folder (keep the `.github` folder).
-2. Open the repo's **Actions** tab — "Build APK" runs automatically (~3 min).
-3. Open the finished run, download **NHKDaily-apk**, unzip it on your phone, tap `app-debug.apk`, and allow "install unknown apps" when asked.
+There are no gamified streaks or whatever. Just removes any barriers to you doing some daily reading practice.
 
-## Or with Android Studio
-Open this folder, let it sync, then Run on your phone (or Build → Build APK).
+iOS version coming never.
 
 ## Settings
-Furigana on/off: Android Settings → Apps → NHK Daily → tap the gear (or "Additional settings in the app").
+Furigana on/off: Android Settings → Apps → Nikkan → tap the gear (or "Additional settings in the app").
