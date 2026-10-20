@@ -25,7 +25,7 @@ public class SettingsActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setTitle("一日の記事 設定");
+        setTitle("Nikkan settings");
 
         int pad = dp(20);
         LinearLayout root = new LinearLayout(this);
