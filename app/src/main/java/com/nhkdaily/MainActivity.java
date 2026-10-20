@@ -22,31 +22,48 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Random;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * One screen, no controls: today's NHK Easy article in a clean reader view.
  * Same article all day, a new random (unseen) one each day.
  *
- * NHK Easy now lives on NHK ONE, whose article list needs a session token,
- * so instead of calling an API we load NHK's own pages in the WebView, read
- * the article links off the page, then reformat the chosen article.
- * The first time, NHK ONE shows a one-off terms screen: we show it and wait.
+ * NHK Easy now sits behind NHK ONE. Each launch we first visit NHK's own
+ * "abroad" authorisation link (the same trick nhk-easy-task uses), which
+ * accepts the terms and sets the session cookies. Then we read the article
+ * list JSON with those cookies, pick one, and show it in the reader.
+ * If that ever stops working we fall back to showing NHK's pages so you can
+ * get through the terms by hand.
  */
 public class MainActivity extends Activity {
 
-    private static final String LIST_URL = "https://news.web.nhk/news/easy/list/";
-    private static final String TOP_URL = "https://news.web.nhk/news/easy/";
+    private static final String EASY = "https://news.web.nhk/news/easy/";
+    private static final String LIST_URL = EASY + "list/";
+    private static final String TOP_URL = EASY;
+    private static final String AUTH_URL = "https://news.web.nhk/tix/build_authorize?"
+            + "idp=a-alaz&profileType=abroad"
+            + "&redirect_uri=https%3A%2F%2Fnews.web.nhk%2Fnews%2Feasy%2F"
+            + "&entity=none&area=130&pref=13&jisx0402=13101&postal=1000001";
+    private static final String[] FEEDS = { EASY + "top-list.json", EASY + "news-list.json" };
+    private static final Pattern NEWS_ID =
+            Pattern.compile("\"(?:news_id|newsId)\"\\s*:\\s*\"([A-Za-z0-9]+)\"");
 
     private static final String GATE_TEST =
-            "/内容について確認しました|サービスを利用しない|地域\\(放送局\\)/.test(document.body ? document.body.innerText : '')";
+            "/内容について確認しました|サービスを利用しない|サービスの利用を開始する|受信契約|放送局/.test(document.body ? document.body.innerText : '')";
 
     /** Returns {gate: bool, links: [article urls]} for the current page. */
     private static final String LINKS_JS = """
@@ -60,7 +77,8 @@ public class MainActivity extends Activity {
             if (!rest || /^(list|ogp|about|index|help|faq)/i.test(rest)) return;
             if (/\\.html$/.test(rest) || /^[A-Za-z]{0,4}\\d{6,}/.test(rest)) out[h] = 1;
           });
-          return JSON.stringify({gate: GATE, links: Object.keys(out)});
+          var form = document.querySelectorAll('input:not([type=hidden]),select,textarea').length > 0;
+          return JSON.stringify({gate: GATE, form: form, links: Object.keys(out)});
         })()
         """.replace("GATE", GATE_TEST);
 
@@ -69,7 +87,7 @@ public class MainActivity extends Activity {
         (function(dark, furi){
           if (document.body && document.body.dataset.reader === '1') return 'ok';
           var tx = document.body ? document.body.innerText : '';
-          if (/内容について確認しました|サービスを利用しない|地域\\(放送局\\)/.test(tx)) return 'gate';
+          if (/内容について確認しました|サービスを利用しない|サービスの利用を開始する|受信契約/.test(tx)) return 'gate';
           var sels = ['#js-article-body', '.article-main__body', '.article-body',
                       'article .body', '[class*="article"][class*="body"]', 'article', 'main'];
           var body = null;
@@ -144,7 +162,7 @@ public class MainActivity extends Activity {
         })
         """;
 
-    private enum Mode { IDLE, PICK_LIST, PICK_TOP, READ }
+    private enum Mode { IDLE, AUTH, PICK_LIST, PICK_TOP, READ }
 
     private WebView web;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -154,7 +172,9 @@ public class MainActivity extends Activity {
     private String articleUrl = null;
     private boolean readerShown = false;
     private boolean sawGate = false;
+    private boolean authHandled = false;
     private long phaseStart = 0;
+    private long offSiteSince = 0;
     private int readerTries = 0;
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -184,14 +204,15 @@ public class MainActivity extends Activity {
         web.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
-                // Once the article is showing, ignore link taps. Before that
-                // (e.g. NHK's terms screen) let navigation happen normally.
+                // Once the article is showing, ignore link taps.
                 return readerShown && r.isForMainFrame() && r.hasGesture();
             }
 
             @Override
             public void onPageFinished(WebView v, String url) {
-                if (mode == Mode.READ && !readerShown) {
+                if (mode == Mode.AUTH && url != null && url.startsWith(EASY)) {
+                    afterAuth();
+                } else if (mode == Mode.READ && !readerShown) {
                     readerTries = 0;
                     handler.removeCallbacks(readerLoop);
                     handler.post(readerLoop);
@@ -221,8 +242,17 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    public void onBackPressed() {
+        if (!readerShown && mode != Mode.AUTH && web.canGoBack()) {
+            web.goBack();
+        } else {
+            super.onBackPressed();
+        }
+    }
+
+    @Override
     protected void onPause() {
-        CookieManager.getInstance().flush(); // keep NHK's terms acceptance
+        CookieManager.getInstance().flush();
         super.onPause();
     }
 
@@ -240,37 +270,100 @@ public class MainActivity extends Activity {
         shownDate = today();
         readerShown = false;
         sawGate = false;
+        authHandled = false;
         web.setVisibility(View.INVISIBLE);
+
+        // Step 1: let NHK set fresh session cookies via the "abroad" profile.
+        mode = Mode.AUTH;
+        web.loadUrl(AUTH_URL);
+        handler.postDelayed(this::afterAuth, 15000); // don't wait forever
+    }
+
+    /** Step 2: re-open today's article, or fetch the list and pick one. */
+    private void afterAuth() {
+        if (mode != Mode.AUTH || authHandled) return;
+        authHandled = true;
+        handler.removeCallbacksAndMessages(null);
 
         SharedPreferences prefs = prefs();
         String saved = prefs.getString("url", null);
         if (saved != null && shownDate.equals(prefs.getString("date", ""))) {
             read(saved);
-        } else {
-            startPick(Mode.PICK_LIST, LIST_URL);
+            return;
         }
+
+        final String cookies = CookieManager.getInstance().getCookie(EASY);
+        new Thread(() -> {
+            Set<String> ids = fetchIds(cookies);
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed() || mode != Mode.AUTH) return;
+                if (ids.isEmpty()) {
+                    // Couldn't read the list directly: fall back to NHK's pages.
+                    startPick(Mode.PICK_LIST, LIST_URL);
+                } else {
+                    List<String> urls = new ArrayList<>();
+                    for (String id : ids) urls.add(EASY + id + "/" + id + ".html");
+                    choose(urls);
+                }
+            });
+        }).start();
+    }
+
+    private static Set<String> fetchIds(String cookies) {
+        Set<String> ids = new LinkedHashSet<>();
+        for (String feed : FEEDS) {
+            try {
+                HttpURLConnection c = (HttpURLConnection) new URL(feed).openConnection();
+                c.setConnectTimeout(10000);
+                c.setReadTimeout(15000);
+                c.setRequestProperty("User-Agent",
+                        "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36");
+                c.setRequestProperty("Referer", EASY);
+                c.setRequestProperty("Accept", "application/json, text/plain, */*");
+                if (cookies != null) c.setRequestProperty("Cookie", cookies);
+                try (InputStream in = c.getInputStream()) {
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+                    byte[] buf = new byte[8192];
+                    int n;
+                    while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
+                    Matcher m = NEWS_ID.matcher(out.toString("UTF-8"));
+                    while (m.find()) ids.add(m.group(1));
+                } finally {
+                    c.disconnect();
+                }
+            } catch (Exception ignored) {
+                // try the next feed
+            }
+        }
+        return ids;
     }
 
     private void startPick(Mode m, String url) {
         mode = m;
         phaseStart = SystemClock.elapsedRealtime();
+        offSiteSince = 0;
         web.loadUrl(url);
         handler.removeCallbacks(pickLoop);
         handler.postDelayed(pickLoop, 800);
     }
 
-    /** Polls the list page until article links appear (or the terms screen shows). */
+    /**
+     * Fallback: polls whatever NHK page is showing until article links appear.
+     * If nothing turns up quickly, the page is shown so you can get through
+     * NHK ONE's terms steps by hand; never times out on you mid-way.
+     */
     private final Runnable pickLoop = new Runnable() {
         @Override
         public void run() {
             if (mode != Mode.PICK_LIST && mode != Mode.PICK_TOP) return;
             web.evaluateJavascript(LINKS_JS, raw -> {
                 if (mode != Mode.PICK_LIST && mode != Mode.PICK_TOP) return;
-                boolean gate = false;
+                boolean gate = false, form = false;
                 List<String> links = new ArrayList<>();
                 try {
                     JSONObject o = new JSONObject((String) new JSONTokener(raw).nextValue());
                     gate = o.optBoolean("gate");
+                    form = o.optBoolean("form");
                     JSONArray a = o.getJSONArray("links");
                     for (int i = 0; i < a.length(); i++) links.add(a.getString(i));
                 } catch (Exception ignored) {
@@ -280,31 +373,39 @@ public class MainActivity extends Activity {
                     choose(links);
                     return;
                 }
-                if (gate) {
-                    // Let the user get through NHK ONE's one-off terms screen.
-                    sawGate = true;
-                    web.setVisibility(View.VISIBLE);
-                    phaseStart = SystemClock.elapsedRealtime();
-                } else if (SystemClock.elapsedRealtime() - phaseStart > 12000) {
-                    if (mode == Mode.PICK_LIST) {
-                        startPick(Mode.PICK_TOP, TOP_URL);
-                    } else {
-                        fail("記事が見つかりませんでした。<br>Couldn't find today's article.<br>"
-                                + "Try again later.");
+
+                long now = SystemClock.elapsedRealtime();
+                String url = web.getUrl() == null ? "" : web.getUrl();
+                boolean onEasy = url.contains("/news/easy");
+
+                if (gate) sawGate = true;
+                if (gate || now - phaseStart > 5000) web.setVisibility(View.VISIBLE);
+
+                if (!onEasy && !gate && !form) {
+                    if (offSiteSince == 0) offSiteSince = now;
+                    if (now - offSiteSince > 4000) {
+                        startPick(Mode.PICK_LIST, LIST_URL);
+                        return;
                     }
+                } else {
+                    offSiteSince = 0;
+                }
+
+                if (onEasy && !gate && !form && mode == Mode.PICK_LIST && now - phaseStart > 10000) {
+                    startPick(Mode.PICK_TOP, TOP_URL);
                     return;
                 }
-                handler.postDelayed(this, 800);
+                handler.postDelayed(this, 1000);
             });
         }
     };
 
-    private void choose(List<String> links) {
+    private void choose(List<String> urls) {
         SharedPreferences prefs = prefs();
         Set<String> seen = new HashSet<>(prefs.getStringSet("seen", new HashSet<>()));
         List<String> fresh = new ArrayList<>();
-        for (String l : links) if (!seen.contains(l)) fresh.add(l);
-        List<String> pool = fresh.isEmpty() ? links : fresh;
+        for (String u : urls) if (!seen.contains(u)) fresh.add(u);
+        List<String> pool = fresh.isEmpty() ? urls : fresh;
         String url = pool.get(random.nextInt(pool.size()));
 
         seen.add(url);
@@ -317,6 +418,7 @@ public class MainActivity extends Activity {
     }
 
     private void read(String url) {
+        handler.removeCallbacksAndMessages(null);
         mode = Mode.READ;
         articleUrl = url;
         readerShown = false;
@@ -340,7 +442,6 @@ public class MainActivity extends Activity {
                     web.setVisibility(View.VISIBLE);
                     handler.postDelayed(this, 1000);
                 } else if (sawGate && !articleUrl.equals(web.getUrl())) {
-                    // Terms accepted and NHK sent us elsewhere: go back to the article.
                     sawGate = false;
                     web.setVisibility(View.INVISIBLE);
                     web.loadUrl(articleUrl);
