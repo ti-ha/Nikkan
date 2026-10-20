@@ -40,17 +40,11 @@ final class Pages {
                 + ".jp{font-size:16px;min-height:24px;transition:opacity .25s;}"
                 + ".en{font-size:13px;color:var(--mu);margin-top:6px;min-height:18px;transition:opacity .25s;}"
                 + ".t{font-variant-numeric:tabular-nums;}"
-                + ".note{font-size:13px;line-height:1.7;color:var(--mu);margin-top:40px;opacity:0;"
-                + "transition:opacity 1s;}"
-                + ".note.on{opacity:1;}"
                 + "</style></head><body><div class='w'>"
                 + "<div class='k'>日刊</div><div class='n'>NIKKAN</div>"
                 + "<div class='bar'><div class='fill' id='f'><div class='shine'></div></div></div>"
                 + "<div class='jp' id='jp'>準備しています</div>"
                 + "<div class='en'><span id='en'>Getting ready</span><span class='t' id='t'></span></div>"
-                + "<div class='note' id='note'>NHKのサーバーは日本にあるので、少し時間がかかることがあります。<br><br>"
-                + "NHK's servers are in Japan, so this first load can be slow from overseas. "
-                + "Tomorrow's article downloads while you read, so next time it opens instantly.</div>"
                 + "</div><script>"
                 + "var t0=Date.now();"
                 + "function setStep(f,jp,en){"
@@ -59,8 +53,7 @@ final class Pages {
                 + "function swap(id,v){var e=document.getElementById(id);if(e.textContent===v)return;"
                 + "e.style.opacity=0;setTimeout(function(){e.textContent=v;e.style.opacity=1;},180);}"
                 + "setInterval(function(){var s=Math.floor((Date.now()-t0)/1000);"
-                + "document.getElementById('t').textContent=s>=3?' · '+s+'s':'';"
-                + "if(s>=6)document.getElementById('note').className='note on';},500);"
+                + "document.getElementById('t').textContent=s>=3?' · '+s+'s':'';},500);"
                 + "</script></body></html>";
     }
 
