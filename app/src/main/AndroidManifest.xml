@@ -1,18 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-<uses-permission android:name="android.permission.INTERNET"/>
-<application android:label="一日の記事" android:icon="@android:drawable/ic_menu_agenda" android:allowBackup="true">
-<activity android:name=".MainActivity" android:exported="true" android:configChanges="orientation|screenSize|screenLayout|keyboardHidden" android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
-<intent-filter>
-<action android:name="android.intent.action.MAIN"/>
-<category android:name="android.intent.category.LAUNCHER"/>
-</intent-filter>
-</activity>
-<!--  Shows as the gear / "Additional settings in the app" on the App info page  -->
-<activity android:name=".SettingsActivity" android:exported="true" android:label="一日の記事 設定" android:theme="@android:style/Theme.DeviceDefault.DayNight">
-<intent-filter>
-<action android:name="android.intent.action.APPLICATION_PREFERENCES"/>
-<category android:name="android.intent.category.DEFAULT"/>
-</intent-filter>
-</activity>
-</application>
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="Nikkan"
+        android:icon="@android:drawable/ic_menu_agenda"
+        android:allowBackup="true">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Shows as the gear / "Additional settings in the app" on the App info page -->
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="true"
+            android:label="Nikkan settings"
+            android:theme="@android:style/Theme.DeviceDefault.DayNight">
+            <intent-filter>
+                <action android:name="android.intent.action.APPLICATION_PREFERENCES" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+    </application>
 </manifest>
