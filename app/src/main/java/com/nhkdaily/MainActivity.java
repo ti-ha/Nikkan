@@ -69,7 +69,7 @@ public class MainActivity extends Activity {
         (function(dark, furi){
           if (document.body && document.body.dataset.reader === '1') return 'ok';
           var tx = document.body ? document.body.innerText : '';
-          if (/内容について確認しました|サービスを利用しない|地域\(放送局\)/.test(tx)) return 'gate';
+          if (/内容について確認しました|サービスを利用しない|地域\\(放送局\\)/.test(tx)) return 'gate';
           var sels = ['#js-article-body', '.article-main__body', '.article-body',
                       'article .body', '[class*="article"][class*="body"]', 'article', 'main'];
           var body = null;
