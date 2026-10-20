@@ -25,7 +25,7 @@ public class SettingsActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setTitle("NHK Daily settings");
+        setTitle("一日の記事 設定");
 
         int pad = dp(20);
         LinearLayout root = new LinearLayout(this);
