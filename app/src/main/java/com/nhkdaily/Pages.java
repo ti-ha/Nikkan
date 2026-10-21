@@ -8,8 +8,8 @@ final class Pages {
 
     private static String vars(boolean dark) {
         return dark
-                ? ":root{--bg:#16161a;--fg:#e6e3dc;--mu:#8a877f;--line:#2c2b30;--ac:#e0654a;--sel:rgba(224,101,74,.35)}"
-                : ":root{--bg:#faf8f3;--fg:#222;--mu:#8a857a;--line:#e6e1d6;--ac:#b5452f;--sel:rgba(181,69,47,.22)}";
+                ? ":root{--bg:#16161a;--fg:#e6e3dc;--mu:#8a877f;--line:#2c2b30;--ac:#e0654a;--sel:rgba(224,101,74,.35);--card:#222227}"
+                : ":root{--bg:#faf8f3;--fg:#222;--mu:#8a857a;--line:#e6e1d6;--ac:#b5452f;--sel:rgba(181,69,47,.22);--card:#ffffff}";
     }
 
     private static final String HEAD =
@@ -96,7 +96,20 @@ final class Pages {
                 + "img{display:block;width:100%;height:auto;border-radius:8px;margin:0 0 28px;}"
                 + "figure{margin:0;}figcaption{font-family:sans-serif;font-size:13px;color:var(--mu);"
                 + "line-height:1.6;margin:-18px 0 28px;}"
-                + "</style></head><body><div class='r'>" + content + "</div><script>"
+                // Translation island: slides up from the bottom when text is selected.
+                + "#is{position:fixed;left:12px;right:12px;bottom:calc(14px + env(safe-area-inset-bottom));"
+                + "max-width:616px;margin:0 auto;box-sizing:border-box;background:var(--card);color:var(--fg);"
+                + "border:1px solid var(--line);border-radius:16px;box-shadow:0 8px 28px rgba(0,0,0,.18);"
+                + "padding:10px 16px 12px;font:15px/1.5 sans-serif;max-height:38vh;overflow:auto;"
+                + "transform:translateY(calc(100% + 40px));opacity:0;"
+                + "transition:transform .28s cubic-bezier(.2,.8,.2,1),opacity .2s;"
+                + "-webkit-user-select:none;user-select:none;}"
+                + "#is.on{transform:none;opacity:1;}"
+                + "#is .lb{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--mu);"
+                + "margin-bottom:2px;min-height:15px;}"
+                + "#is .tx{transition:opacity .2s;}#is.wait .tx{opacity:.45;}"
+                + "</style></head><body><div class='r'>" + content + "</div>"
+                + "<div id='is'><div class='lb'></div><div class='tx'></div></div><script>"
                 // mode: 'all' | 'wk' | 'none'. In 'wk', a word loses its furigana only
                 // when every kanji in it is in `known`.
                 + "document.querySelectorAll('rt').forEach(function(rt){"
@@ -110,6 +123,21 @@ final class Pages {
                 + "var ks=base.match(/[\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff]/g)||[];"
                 + "var k=mode==='wk'&&ks.length>0&&ks.every(function(c){return set[c];});"
                 + "r.classList.toggle('known',k);});}"
+                // Selecting text asks the app (window.Nikkan) to translate it; the app
+                // answers via showTranslation(). Tapping the article dismisses the island.
+                + "var isl=document.getElementById('is'),itx=isl.querySelector('.tx'),last='',seq=0,tm;"
+                + "document.addEventListener('selectionchange',function(){clearTimeout(tm);tm=setTimeout(function(){"
+                + "var s=(window.getSelection()+'').replace(/\\s+/g,' ').trim();"
+                + "if(!s||s===last)return;if(s.length>800)s=s.slice(0,800);"
+                + "last=s;seq++;isl.className='on wait';if(!itx.textContent)itx.textContent='…';"
+                + "if(window.Nikkan)Nikkan.translate(seq,s);},350);});"
+                + "function showTranslation(id,t,lb){if(id!==seq)return;itx.textContent=t;"
+                + "if(lb)isl.querySelector('.lb').textContent=lb;isl.className='on';}"
+                + "function hideIsland(){isl.className='';last='';seq++;"
+                + "var sel=window.getSelection();if(sel)sel.removeAllRanges();"
+                + "setTimeout(function(){if(!isl.className)itx.textContent='';},300);}"
+                + "document.addEventListener('click',function(e){"
+                + "if(isl.className.indexOf('on')<0||isl.contains(e.target))return;hideIsland();});"
                 + furiganaCall + ";"
                 + "</script></body></html>";
     }
