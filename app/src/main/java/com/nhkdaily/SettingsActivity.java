@@ -10,7 +10,10 @@ import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.NumberPicker;
 import android.widget.RadioButton;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.RadioGroup;
+import android.widget.Spinner;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -32,6 +35,46 @@ public class SettingsActivity extends Activity {
     private static final String KEY_MODE = "furigana_mode";
     private static final String KEY_OLD_BOOL = "furigana";
     private static final String KEY_LEVEL = "wk_level";
+    private static final String KEY_LANG = "translate_to";
+
+    /** Google Translate code, native name, English name. */
+    static final String[][] LANGUAGES = {
+            {"en", "English", "English"},
+            {"zh-CN", "简体中文", "Chinese (Simplified)"},
+            {"zh-TW", "繁體中文", "Chinese (Traditional)"},
+            {"ko", "한국어", "Korean"},
+            {"es", "Español", "Spanish"},
+            {"fr", "Français", "French"},
+            {"de", "Deutsch", "German"},
+            {"it", "Italiano", "Italian"},
+            {"pt", "Português", "Portuguese"},
+            {"nl", "Nederlands", "Dutch"},
+            {"sv", "Svenska", "Swedish"},
+            {"pl", "Polski", "Polish"},
+            {"ru", "Русский", "Russian"},
+            {"uk", "Українська", "Ukrainian"},
+            {"tr", "Türkçe", "Turkish"},
+            {"ar", "العربية", "Arabic"},
+            {"hi", "हिन्दी", "Hindi"},
+            {"ne", "नेपाली", "Nepali"},
+            {"vi", "Tiếng Việt", "Vietnamese"},
+            {"th", "ไทย", "Thai"},
+            {"id", "Bahasa Indonesia", "Indonesian"},
+            {"ms", "Bahasa Melayu", "Malay"},
+            {"tl", "Filipino", "Filipino"},
+            {"my", "မြန်မာ", "Burmese"},
+            {"mn", "Монгол", "Mongolian"},
+    };
+
+    public static String translateTo(Context c) {
+        return c.getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_LANG, "en");
+    }
+
+    /** The language's own name, shown as the label on the translation card. */
+    public static String languageLabel(String code) {
+        for (String[] l : LANGUAGES) if (l[0].equals(code)) return l[1];
+        return code;
+    }
 
     public static String furiganaMode(Context c) {
         SharedPreferences p = c.getSharedPreferences(PREFS, MODE_PRIVATE);
@@ -127,6 +170,38 @@ public class SettingsActivity extends Activity {
             prefs.edit().putString(KEY_MODE, m).apply();
             setLevelVisible(FURI_WK.equals(m), hintView);
         });
+
+        // Translation language
+        TextView th = heading("Translate selected text into");
+        th.setPadding(0, dp(28), 0, dp(4));
+        root.addView(th);
+
+        String[] names = new String[LANGUAGES.length];
+        int current = 0;
+        String chosen = translateTo(this);
+        for (int i = 0; i < LANGUAGES.length; i++) {
+            names[i] = LANGUAGES[i][1].equals(LANGUAGES[i][2])
+                    ? LANGUAGES[i][1] : LANGUAGES[i][1] + "  ·  " + LANGUAGES[i][2];
+            if (LANGUAGES[i][0].equals(chosen)) current = i;
+        }
+        Spinner lang = new Spinner(this);
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, names);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        lang.setAdapter(adapter);
+        lang.setSelection(current);
+        lang.setMinimumHeight(dp(52));
+        lang.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int pos, long id) {
+                prefs.edit().putString(KEY_LANG, LANGUAGES[pos][0]).apply();
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+            }
+        });
+        root.addView(lang);
 
         ScrollView scroll = new ScrollView(this);
         scroll.addView(root);
