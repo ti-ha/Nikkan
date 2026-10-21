@@ -12,6 +12,7 @@ import android.os.SystemClock;
 import android.view.View;
 import android.view.Window;
 import android.webkit.CookieManager;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -46,6 +47,8 @@ public class MainActivity extends Activity {
 
     /** One background thread for all network work, shared across launches. */
     private static final ExecutorService WORK = Executors.newSingleThreadExecutor();
+    /** Translations get their own thread so they never wait behind a download. */
+    private static final ExecutorService TRANSLATE = Executors.newSingleThreadExecutor();
     private static final NhkClient NHK = new NhkClient();
 
     /** When the hidden browser last signed in to NHK (per app process). */
@@ -100,7 +103,34 @@ public class MainActivity extends Activity {
                 if (loadingShown) pushProgress(); // in case updates arrived before the page was ready
             }
         });
+        web.addJavascriptInterface(new Bridge(), "Nikkan");
         setContentView(web);
+    }
+
+    /** Called from the reader page when you select text. */
+    private class Bridge {
+        @JavascriptInterface
+        public void translate(int id, String text) {
+            final String target = SettingsActivity.translateTo(MainActivity.this);
+            final String label = SettingsActivity.languageLabel(target);
+            TRANSLATE.submit(() -> {
+                String result;
+                try {
+                    result = Translator.translate(text, target);
+                } catch (Exception e) {
+                    result = e instanceof java.net.UnknownHostException
+                            ? "Can't translate: no internet connection"
+                            : "Couldn't translate right now";
+                }
+                final String r = result;
+                runOnUiThread(() -> {
+                    if (alive()) {
+                        web.evaluateJavascript("window.showTranslation&&showTranslation(" + id + ","
+                                + JSONObject.quote(r) + "," + JSONObject.quote(label) + ")", null);
+                    }
+                });
+            });
+        }
     }
 
     @Override
@@ -110,6 +140,7 @@ public class MainActivity extends Activity {
             start();
         } else if (readerShown) {
             applyFurigana(); // settings may have changed
+            web.evaluateJavascript("window.last=''", null); // re-translate in a newly chosen language
         }
     }
 
