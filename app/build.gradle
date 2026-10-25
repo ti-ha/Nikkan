@@ -18,8 +18,16 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+
+    packaging {
+        resources {
+            excludes += ["META-INF/LICENSE*", "META-INF/NOTICE*", "META-INF/DEPENDENCIES"]
+        }
+    }
 }
 
 dependencies {
     implementation "org.jsoup:jsoup:1.17.2"
+    // Japanese word splitting + readings for furigana on regular NHK articles (IPADIC dictionary)
+    implementation "com.atilika.kuromoji:kuromoji-ipadic:0.9.0"
 }
