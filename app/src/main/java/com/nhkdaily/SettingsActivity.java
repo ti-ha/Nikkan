@@ -68,6 +68,15 @@ public class SettingsActivity extends Activity {
     };
 
     private static final String KEY_DAILY_FONT = "daily_font";
+    private static final String KEY_SOURCE = "article_source";
+    public static final String SOURCE_EASY = "easy";
+    public static final String SOURCE_REGULAR = "regular";
+    public static final String SOURCE_MIX = "mix";
+
+    /** Where articles come from: NHK Easy (default), regular NHK News, or alternating days. */
+    public static String articleSource(Context c) {
+        return c.getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_SOURCE, SOURCE_EASY);
+    }
 
     /** "A different font each day" (off by default). */
     public static boolean dailyFont(Context c) {
@@ -125,6 +134,31 @@ public class SettingsActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(pad, pad, pad, pad);
+
+        // Article source
+        root.addView(heading("Articles"));
+        RadioGroup src = new RadioGroup(this);
+        RadioButton srcEasy = radio("NHK Easy (やさしい日本語)");
+        RadioButton srcRegular = radio("Regular NHK News");
+        RadioButton srcMix = radio("Mix: alternate each day");
+        src.addView(srcEasy);
+        src.addView(srcRegular);
+        src.addView(srcMix);
+        root.addView(src);
+        String source = articleSource(this);
+        (SOURCE_REGULAR.equals(source) ? srcRegular : SOURCE_MIX.equals(source) ? srcMix : srcEasy)
+                .setChecked(true);
+        src.setOnCheckedChangeListener((g, id) -> prefs.edit().putString(KEY_SOURCE,
+                id == srcRegular.getId() ? SOURCE_REGULAR : id == srcMix.getId() ? SOURCE_MIX : SOURCE_EASY)
+                .apply());
+        TextView srcHint = new TextView(this);
+        srcHint.setText("Regular NHK articles are longer and written for native readers. "
+                + "They don't have furigana yet, so the furigana options only affect NHK Easy articles. "
+                + "Changing this swaps in a new article straight away.");
+        srcHint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        srcHint.setAlpha(0.6f);
+        srcHint.setPadding(0, dp(4), 0, dp(24));
+        root.addView(srcHint);
 
         root.addView(heading("Furigana"));
 

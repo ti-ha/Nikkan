@@ -100,6 +100,8 @@ final class Pages {
                 + ".r{max-width:640px;margin:0 auto;padding:56px 22px 96px;}"
                 + ".dt{font-family:sans-serif;font-size:13px;color:var(--mu);letter-spacing:.05em;margin-bottom:10px;}"
                 + "h1{font-size:26px;line-height:1.9;margin:0 0 28px;font-weight:700;}"
+                // Regular NHK articles have subheadings.
+                + "h2{font-size:22px;line-height:1.7;margin:1.8em 0 .6em;font-weight:700;}"
                 + "p{margin:0 0 1.3em;}"
                 // Furigana is drawn from a data attribute (rt::before), so it isn't real text
                 // and never ends up in a selection: Translate / Copy get just the Japanese.
@@ -195,6 +197,8 @@ final class Pages {
                 + "setTimeout(function(){if(!isl.className)itx.textContent='';},300);}"
                 + "document.addEventListener('click',function(e){"
                 + "if(isl.className.indexOf('on')<0||isl.contains(e.target))return;hideIsland();});"
+                // No furigana (regular NHK): less space between lines is needed.
+                + "if(!document.querySelector('ruby'))document.body.style.lineHeight='1.85';"
                 + furiganaCall + ";"
                 + (fontFamily == null ? "" : "(function(){var d=document.querySelector('.dt');if(d){"
                 + "var s=document.createElement('span');s.className='fn';s.textContent=' · '+"

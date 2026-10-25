@@ -236,6 +236,11 @@ public class MainActivity extends Activity {
         if (!today().equals(shownDate)) {
             start();
         } else if (readerShown) {
+            if (!sourceMatches(shownDate)) { // article source changed in settings
+                shownDate = null;
+                start();
+                return;
+            }
             applyFurigana(); // settings may have changed
             refreshFont();
             web.evaluateJavascript("window.last=''", null); // re-translate in a newly chosen language
@@ -269,10 +274,13 @@ public class MainActivity extends Activity {
         cleanUp(today);
         speaker.clearCache();
 
+        if (isReady(today) && !sourceMatches(today)) deleteDay(today); // source setting changed
+
         if (isReady(today)) {
             showArticle(today);
             refreshFont();
             signInThen(() -> WORK.submit(() -> {
+                if (isReady(tomorrow) && !sourceMatches(tomorrow)) deleteDay(tomorrow);
                 prepareQuietly(tomorrow);
                 ensureFont(tomorrow);
             }));
@@ -291,6 +299,7 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     if (alive() && today.equals(shownDate)) showArticle(today);
                 });
+                if (isReady(tomorrow) && !sourceMatches(tomorrow)) deleteDay(tomorrow);
                 prepareQuietly(tomorrow);
                 ensureFont(tomorrow);
             } catch (Exception e) {
@@ -343,6 +352,20 @@ public class MainActivity extends Activity {
         handler.postDelayed(finishSignIn, 25000); // carry on regardless after 25s
     }
 
+    /** Union of two Cookie headers (cookies can be scoped to /news/easy/ or /newsweb/). */
+    private static String mergeCookies(String a, String b) {
+        java.util.LinkedHashMap<String, String> all = new java.util.LinkedHashMap<>();
+        for (String header : new String[]{a, b}) {
+            if (header == null) continue;
+            for (String pair : header.split(";")) {
+                String t = pair.trim();
+                int eq = t.indexOf('=');
+                if (eq > 0) all.putIfAbsent(t.substring(0, eq), t);
+            }
+        }
+        return all.isEmpty() ? null : String.join("; ", all.values());
+    }
+
     private final Runnable finishSignIn = new Runnable() {
         @Override
         public void run() {
@@ -352,7 +375,7 @@ public class MainActivity extends Activity {
             if (next == null) return;
             CookieManager cm = CookieManager.getInstance();
             cm.flush();
-            String cookies = cm.getCookie(NhkClient.EASY);
+            String cookies = mergeCookies(cm.getCookie(NhkClient.EASY), cm.getCookie(RegularNews.BASE));
             if (cookies != null && !cookies.isEmpty()) {
                 NHK.useBrowserCookies(cookies);
                 signedInAt = SystemClock.elapsedRealtime();
@@ -365,13 +388,18 @@ public class MainActivity extends Activity {
     /** Gets the article for a date into its folder, unless it's already there. Runs on WORK. */
     private void prepare(String date, NhkClient.Progress p) throws Exception {
         if (isReady(date)) return;
+        final String source = sourceFor(date);
         p.step(0.18f, "記事の一覧を取得しています", "Getting the list of articles");
         List<NhkClient.Item> items;
-        try {
-            items = NHK.list();
-        } catch (Exception first) {
-            NHK.signIn(); // fresh session and one more go
-            items = NHK.list();
+        if (SettingsActivity.SOURCE_REGULAR.equals(source)) {
+            items = NHK.listRegular();
+        } else {
+            try {
+                items = NHK.list();
+            } catch (Exception first) {
+                NHK.signIn(); // fresh session and one more go
+                items = NHK.list();
+            }
         }
         p.step(0.3f, "記事を選んでいます", "Choosing an article");
 
@@ -387,7 +415,8 @@ public class MainActivity extends Activity {
         NHK.download(pick, dayDir(date), p);
 
         seen.add(pick.id);
-        prefs.edit().putStringSet("seen_ids", seen).putString("id_" + date, pick.id).apply();
+        prefs.edit().putStringSet("seen_ids", seen).putString("id_" + date, pick.id)
+                .putString("src_" + date, source).apply();
     }
 
     private void prepareQuietly(String date) {
@@ -396,6 +425,32 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) {
             // No problem: it'll be fetched when that day comes.
         }
+    }
+
+    // ---- Article source (NHK Easy / regular NHK / mix) -------------------------------
+
+    /** Which source a date's article comes from: the setting, or for "mix" alternating days. */
+    private String sourceFor(String date) {
+        String s = SettingsActivity.articleSource(this);
+        if (!SettingsActivity.SOURCE_MIX.equals(s)) return s;
+        try {
+            SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+            f.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+            long day = f.parse(date).getTime() / 86_400_000L;
+            return day % 2 == 0 ? SettingsActivity.SOURCE_EASY : SettingsActivity.SOURCE_REGULAR;
+        } catch (Exception e) {
+            return SettingsActivity.SOURCE_EASY;
+        }
+    }
+
+    private boolean sourceMatches(String date) {
+        String saved = prefs().getString("src_" + date, SettingsActivity.SOURCE_EASY);
+        return saved.equals(sourceFor(date));
+    }
+
+    private void deleteDay(String date) {
+        NhkClient.deleteRecursive(dayDir(date));
+        prefs().edit().remove("id_" + date).remove("src_" + date).remove("font_" + date).apply();
     }
 
     // ---- A different font each day ------------------------------------------------
@@ -470,7 +525,7 @@ public class MainActivity extends Activity {
             String name = d.getName().replace(".part", "");
             if (name.compareTo(today) < 0) {
                 NhkClient.deleteRecursive(d);
-                prefs().edit().remove("id_" + name).remove("font_" + name).apply();
+                prefs().edit().remove("id_" + name).remove("font_" + name).remove("src_" + name).apply();
             }
         }
     }

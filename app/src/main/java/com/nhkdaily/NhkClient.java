@@ -55,6 +55,10 @@ public class NhkClient {
 
     public static class Item {
         public String id, title, titleRuby, date, image;
+        /** Page address (regular NHK); NHK Easy pages are built from the id. */
+        public String url;
+        /** Regular NHK News rather than NHK Easy. */
+        public boolean regular;
     }
 
     private final CookieManager cookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
@@ -164,6 +168,26 @@ public class NhkClient {
         return new ArrayList<>(items.values());
     }
 
+    /** Recent regular NHK News articles (public sitemap, RSS as a fallback). */
+    public List<Item> listRegular() throws IOException {
+        IOException last = null;
+        for (String feed : new String[]{RegularNews.sitemapUrl, RegularNews.rssUrl}) {
+            try {
+                Response r = get(feed, RegularNews.BASE);
+                if (r.code != 200) {
+                    last = new IOException("Regular news list: NHK said " + r.code);
+                    continue;
+                }
+                List<Item> items = RegularNews.parseList(new String(r.body, StandardCharsets.UTF_8));
+                if (!items.isEmpty()) return items;
+                last = new IOException("Regular news list was empty");
+            } catch (IOException e) {
+                last = e;
+            }
+        }
+        throw last != null ? last : new IOException("No regular articles listed");
+    }
+
     private static void collect(Object node, Map<String, Item> out) {
         if (node instanceof JSONObject) {
             JSONObject o = (JSONObject) node;
@@ -223,15 +247,20 @@ public class NhkClient {
      * download never looks complete.
      */
     public void download(Item item, File dir, Progress p) throws IOException {
-        String url = easyBase + item.id + "/" + item.id + ".html";
+        String url = item.url != null ? item.url : easyBase + item.id + "/" + item.id + ".html";
         p.step(0.45f, "記事をダウンロードしています", "Downloading the article");
-        Response r = getSignedIn(url, easyBase);
+        Response r = getSignedIn(url, item.regular ? RegularNews.BASE : easyBase);
         if (r.code != 200) throw new IOException("Article page: NHK said " + r.code);
 
         Document doc = Jsoup.parse(new String(r.body, StandardCharsets.UTF_8), url);
-        Element body = doc.getElementById("js-article-body");
-        if (body == null) body = doc.selectFirst(".article-main__body, .article-body, [class*=article][class*=body]");
-        if (body == null) throw new IOException("Couldn't find the article text on the page");
+        Element body;
+        if (item.regular) {
+            body = RegularNews.extract(doc);
+        } else {
+            body = doc.getElementById("js-article-body");
+            if (body == null) body = doc.selectFirst(".article-main__body, .article-body, [class*=article][class*=body]");
+            if (body == null) throw new IOException("Couldn't find the article text on the page");
+        }
 
         body.select("script, style, iframe, button, audio, video, form, nav, aside, svg, noscript").remove();
         body.select("a").unwrap();
@@ -242,10 +271,10 @@ public class NhkClient {
         }
 
         // Title (keep furigana)
-        String titleHtml = item.titleRuby;
+        String titleHtml = item.regular && item.title != null ? escape(item.title) : item.titleRuby;
         if (titleHtml == null || titleHtml.isEmpty()) {
             Element h = doc.selectFirst(".article-main__title, .article-title, h1");
-            titleHtml = h != null ? h.html() : (item.title == null ? "" : item.title);
+            titleHtml = h != null ? h.html() : (item.title == null ? "" : escape(item.title));
         }
         Element titleEl = Jsoup.parseBodyFragment(titleHtml).body();
         titleEl.select("a").unwrap();
