@@ -126,6 +126,9 @@ public class SettingsActivity extends Activity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        // No title bar: on Android 15+ apps draw edge to edge and the bar covered the first
+        // settings. The title is part of the page instead, padded clear of the system bars.
+        requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
         super.onCreate(savedInstanceState);
         setTitle("Nikkan settings");
         final SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
@@ -134,6 +137,12 @@ public class SettingsActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(pad, pad, pad, pad);
+
+        TextView title = new TextView(this);
+        title.setText("Nikkan settings");
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 24);
+        title.setPadding(0, dp(8), 0, dp(20));
+        root.addView(title);
 
         // Article source
         root.addView(heading("Articles"));
@@ -273,6 +282,12 @@ public class SettingsActivity extends Activity {
 
         ScrollView scroll = new ScrollView(this);
         scroll.addView(root);
+        scroll.setClipToPadding(false);
+        scroll.setOnApplyWindowInsetsListener((v, insets) -> {
+            v.setPadding(insets.getSystemWindowInsetLeft(), insets.getSystemWindowInsetTop(),
+                    insets.getSystemWindowInsetRight(), insets.getSystemWindowInsetBottom());
+            return insets;
+        });
         setContentView(scroll);
     }
 

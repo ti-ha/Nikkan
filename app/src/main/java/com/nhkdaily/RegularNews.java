@@ -35,9 +35,19 @@ final class RegularNews {
     /** Breaking-news and live-update items: too short or constantly changing to read. */
     private static final Pattern SKIP_TITLE = Pattern.compile("^【|速報|ライブ|中継|詳しく|動画で");
     /** Class/id words that mark page furniture (whole words only, so "shared-layout" isn't caught). */
-    private static final Pattern BOILERPLATE = Pattern.compile("(?i)(^|[\\s_-])(related|recommend|ranking|"
-            + "share|sns|breadcrumb|banner|footer|menu|navi|pickup|taglist|tags|movielist|videolist|"
-            + "movie|video|program|modal|consent|gate|ad|ads|promo)(?=$|[\\s_-])");
+    private static final Pattern BOILERPLATE = Pattern.compile(
+            // word start: start, separator, or a camelCase hump ("articleRelated")
+            "(?:^|[\\s_-]|(?<=[a-z])(?=[A-Z]))(?i:related|recommend|ranking|share|sns|breadcrumb|banner|"
+            + "footer|menu|navi|pickup|taglist|tags|keyword|keywords|movielist|videolist|movie|video|"
+            + "program|modal|consent|gate|ad|ads|promo)"
+            // word end: end, separator, digit, or the next camelCase word ("relatedArticles")
+            + "(?=$|[\\s_-]|[0-9A-Z])");
+
+    /** NHK's section headings after the article: everything from here on is not the article. */
+    private static final Pattern END_OF_ARTICLE = Pattern.compile("^(注目ワード|あわせて読みたい|合わせて読みたい|"
+            + "関連ニュース|関連記事|関連リンク|こちらもおすすめ|おすすめ|おすすめ記事|最新・注目の動画|注目の動画|"
+            + "最新ニュース|新着ニュース|ランキング|アクセスランキング|トップニュース|特集|"
+            + "この記事を(シェア|共有)する?|シェアする|NHKニュースアプリ.*)$");
 
     private RegularNews() {
     }
@@ -147,6 +157,7 @@ final class RegularNews {
         String lastText = "";
         for (Element e : container.getAllElements()) {
             if (inFurniture(e)) continue;
+            if (chars > 0 && isEndMarker(e)) break; // reached "あわせて読みたい" etc.
             String tag = e.tagName();
             if (tag.matches("h[2-4]")) {
                 String t = e.text().trim();
@@ -177,6 +188,13 @@ final class RegularNews {
         boolean truncated = lastText.endsWith("…") || lastText.endsWith("...");
         if (chars < 80 || (gate && (truncated || chars < 300))) throw notFound(gate);
         return out;
+    }
+
+    /** A heading-like element whose whole text is one of NHK's after-the-article section titles. */
+    private static boolean isEndMarker(Element e) {
+        String own = e.ownText().trim();
+        if (own.isEmpty() && e.children().size() == 1) own = e.text().trim(); // e.g. <h2><span>…</span></h2>
+        return !own.isEmpty() && own.length() <= 20 && END_OF_ARTICLE.matcher(own).matches();
     }
 
     /** Inside a related-articles list, share bar, menu, ad... (page-level wrappers don't count). */

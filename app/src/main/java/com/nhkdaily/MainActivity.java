@@ -66,6 +66,8 @@ public class MainActivity extends Activity {
     private WebView web;
     private WebView authWeb;
     private Speaker speaker;
+    /** Status bar / navigation bar heights in CSS pixels (Android 15+ draws under them). */
+    private float insetTop = 0, insetBottom = 0;
     /** Font family the reader is currently drawn in (null = the normal font). */
     private String renderedFont = null;
     private Runnable afterSignIn;
@@ -114,9 +116,17 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView v, String url) {
                 if (loadingShown) pushProgress(); // in case updates arrived before the page was ready
+                pushInsets();
             }
         });
         web.addJavascriptInterface(new Bridge(), "Nikkan");
+        web.setOnApplyWindowInsetsListener((v, insets) -> {
+            float d = getResources().getDisplayMetrics().density;
+            insetTop = insets.getSystemWindowInsetTop() / d;
+            insetBottom = insets.getSystemWindowInsetBottom() / d;
+            pushInsets();
+            return v.onApplyWindowInsets(insets);
+        });
         setContentView(web);
     }
 
@@ -548,6 +558,12 @@ public class MainActivity extends Activity {
             lastEn = en;
             pushProgress();
         });
+    }
+
+    private void pushInsets() {
+        if (web == null) return;
+        web.evaluateJavascript("document.documentElement.style.setProperty('--sat','" + insetTop + "px');"
+                + "document.documentElement.style.setProperty('--sab','" + insetBottom + "px');", null);
     }
 
     private void pushProgress() {

@@ -97,7 +97,10 @@ final class Pages {
                 + "body{font-family:'Noto Serif CJK JP','Noto Serif JP',serif;font-size:21px;line-height:2.1;"
                 + "-webkit-text-size-adjust:100%;}"
                 + "::selection{background:var(--sel);}"
-                + ".r{max-width:640px;margin:0 auto;padding:56px 22px 96px;}"
+                + ".r{max-width:640px;margin:0 auto;padding:calc(56px + var(--sat,0px)) 22px 96px;}"
+                // Android 15+ draws under the status bar: keep a strip of background there.
+                + "body::before{content:'';position:fixed;z-index:4;top:0;left:0;right:0;"
+                + "height:var(--sat,0px);background:var(--bg);}"
                 + ".dt{font-family:sans-serif;font-size:13px;color:var(--mu);letter-spacing:.05em;margin-bottom:10px;}"
                 + "h1{font-size:26px;line-height:1.9;margin:0 0 28px;font-weight:700;}"
                 // Regular NHK articles have subheadings.
@@ -111,7 +114,8 @@ final class Pages {
                 + "figure{margin:0;}figcaption{font-family:sans-serif;font-size:13px;color:var(--mu);"
                 + "line-height:1.6;margin:-18px 0 28px;}"
                 // Translation island: slides up from the bottom when text is selected.
-                + "#is{position:fixed;left:12px;right:12px;bottom:calc(14px + env(safe-area-inset-bottom));"
+                + "#is{position:fixed;left:12px;right:12px;z-index:6;"
+                + "bottom:calc(14px + max(env(safe-area-inset-bottom),var(--sab,0px)));"
                 + "max-width:616px;margin:0 auto;box-sizing:border-box;background:var(--card);color:var(--fg);"
                 + "border:1px solid var(--line);border-radius:16px;box-shadow:0 8px 28px rgba(0,0,0,.18);"
                 + "padding:10px 16px 12px;font:15px/1.5 sans-serif;max-height:38vh;overflow:auto;"
@@ -184,7 +188,8 @@ final class Pages {
                 + "var r=s.getRangeAt(0).getBoundingClientRect();mn.style.display='flex';"
                 + "var w=mn.offsetWidth,h=mn.offsetHeight,x=r.left+r.width/2-w/2;"
                 + "x=Math.max(8,Math.min(innerWidth-w-8,x));var y=r.top-h-14;"
-                + "if(y<8)y=r.bottom+44;mn.style.left=x+'px';mn.style.top=y+'px';}"
+                + "var minY=8+(parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sat'))||0);"
+                + "if(y<minY)y=r.bottom+44;mn.style.left=x+'px';mn.style.top=y+'px';}"
                 + "document.addEventListener('selectionchange',function(){clearTimeout(mt);mt=setTimeout(placeMenu,150);});"
                 + "window.addEventListener('scroll',function(){if(mn.style.display!=='none')placeMenu();},{passive:true});"
                 + "press(mn,function(e){var b=e.target.closest('button');if(!b)return;"
