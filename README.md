@@ -15,3 +15,4 @@ Furigana on/off: Android Settings → Apps → Nikkan → tap the gear (or "Addi
 - WaniKani kanji levels from [kanji-data](https://github.com/davidluzgouveia/kanji-data) (MIT).
 - Read-aloud connection and token code ported from [edge-tts](https://github.com/rany2/edge-tts). `EdgeToken.java` is under the LGPL-3.0, like the original.
 - Daily fonts are open-source (SIL Open Font License) Japanese fonts from [Google Fonts](https://fonts.google.com), downloaded per article.
+- Furigana for regular NHK articles: [Kuromoji](https://github.com/atilika/kuromoji) (Apache-2.0) with the IPADIC dictionary.
