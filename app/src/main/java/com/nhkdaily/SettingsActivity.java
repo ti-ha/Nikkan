@@ -162,7 +162,8 @@ public class SettingsActivity extends Activity {
                 .apply());
         TextView srcHint = new TextView(this);
         srcHint.setText("Regular NHK articles are longer and written for native readers. "
-                + "They don't have furigana yet, so the furigana options only affect NHK Easy articles. "
+                + "The app adds their furigana itself, so the furigana options work for both. "
+                + "Its readings are occasionally wrong, mostly for names. "
                 + "Changing this swaps in a new article straight away.");
         srcHint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         srcHint.setAlpha(0.6f);

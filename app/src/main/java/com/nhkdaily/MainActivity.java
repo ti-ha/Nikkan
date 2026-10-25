@@ -289,6 +289,15 @@ public class MainActivity extends Activity {
         if (isReady(today)) {
             showArticle(today);
             refreshFont();
+            if (needsFurigana(today)) { // a regular article saved before furigana existed
+                WORK.submit(() -> {
+                    if (addFurigana(today)) {
+                        runOnUiThread(() -> {
+                            if (alive() && readerShown && today.equals(shownDate)) showArticle(today);
+                        });
+                    }
+                });
+            }
             signInThen(() -> WORK.submit(() -> {
                 if (isReady(tomorrow) && !sourceMatches(tomorrow)) deleteDay(tomorrow);
                 prepareQuietly(tomorrow);
@@ -423,6 +432,10 @@ public class MainActivity extends Activity {
         NhkClient.Item pick = pool.get(new Random().nextInt(pool.size()));
 
         NHK.download(pick, dayDir(date), p);
+        if (SettingsActivity.SOURCE_REGULAR.equals(source)) {
+            p.step(1f, "ふりがなを付けています", "Adding furigana");
+            addFurigana(date);
+        }
 
         seen.add(pick.id);
         prefs.edit().putStringSet("seen_ids", seen).putString("id_" + date, pick.id)
@@ -461,6 +474,22 @@ public class MainActivity extends Activity {
     private void deleteDay(String date) {
         NhkClient.deleteRecursive(dayDir(date));
         prefs().edit().remove("id_" + date).remove("src_" + date).remove("font_" + date).apply();
+    }
+
+    // ---- Furigana for regular NHK ----------------------------------------------------
+
+    private boolean needsFurigana(String date) {
+        if (!SettingsActivity.SOURCE_REGULAR.equals(prefs().getString("src_" + date, ""))) return false;
+        return !readFile(new File(dayDir(date), "content.html")).contains("<ruby");
+    }
+
+    /** Adds furigana to a saved regular article. Runs off the UI thread. Never fails the article. */
+    private boolean addFurigana(String date) {
+        try {
+            return Furigana.addTo(new File(dayDir(date), "content.html"), KuromojiAnalyzer.get());
+        } catch (Throwable t) { // even an out-of-memory: the article still shows, just without furigana
+            return false;
+        }
     }
 
     // ---- A different font each day ------------------------------------------------
