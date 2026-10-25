@@ -2,6 +2,9 @@ package com.nhkdaily;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.graphics.Color;
@@ -9,6 +12,10 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.graphics.Rect;
+import android.view.ActionMode;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
 import android.view.Window;
 import android.webkit.CookieManager;
@@ -58,6 +65,7 @@ public class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private WebView web;
     private WebView authWeb;
+    private Speaker speaker;
     private Runnable afterSignIn;
     private String shownDate = null;
     private boolean readerShown = false;
@@ -79,13 +87,16 @@ public class MainActivity extends Activity {
             getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
         }
 
-        web = new WebView(this);
+        web = new ReaderWebView(this);
         web.setBackgroundColor(bg);
+        speaker = new Speaker(this, state -> {
+            if (alive()) web.evaluateJavascript("window.setSpeech&&setSpeech('" + state + "')", null);
+        });
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
         s.setAllowFileAccess(true);       // saved articles and pictures live in app storage
         s.setBlockNetworkLoads(true);     // the reader never touches the network itself
-        // Long-press selection stays on, so Android's Translate / Copy menu works.
+        // Long-press selection stays on; the menu that pops up is our own (see ReaderWebView).
         web.setLongClickable(true);
 
         web.setWebViewClient(new WebViewClient() {
@@ -107,8 +118,92 @@ public class MainActivity extends Activity {
         setContentView(web);
     }
 
+    /**
+     * WebView with Android's text-selection toolbar emptied out (no Read aloud,
+     * Translate, Share...). Selection handles still work; the reader page
+     * shows its own small menu instead.
+     */
+    static class ReaderWebView extends WebView {
+        ReaderWebView(Context c) {
+            super(c);
+        }
+
+        @Override
+        public ActionMode startActionMode(ActionMode.Callback callback) {
+            return super.startActionMode(new EmptyMenu(callback));
+        }
+
+        @Override
+        public ActionMode startActionMode(ActionMode.Callback callback, int type) {
+            return super.startActionMode(new EmptyMenu(callback), type);
+        }
+    }
+
+    private static class EmptyMenu extends ActionMode.Callback2 {
+        private final ActionMode.Callback inner;
+
+        EmptyMenu(ActionMode.Callback inner) {
+            this.inner = inner;
+        }
+
+        @Override
+        public boolean onCreateActionMode(ActionMode mode, Menu menu) {
+            inner.onCreateActionMode(mode, menu);
+            menu.clear();
+            return true;
+        }
+
+        @Override
+        public boolean onPrepareActionMode(ActionMode mode, Menu menu) {
+            inner.onPrepareActionMode(mode, menu);
+            menu.clear();
+            return true;
+        }
+
+        @Override
+        public boolean onActionItemClicked(ActionMode mode, MenuItem item) {
+            return false;
+        }
+
+        @Override
+        public void onDestroyActionMode(ActionMode mode) {
+            inner.onDestroyActionMode(mode);
+        }
+
+        @Override
+        public void onGetContentRect(ActionMode mode, View view, Rect outRect) {
+            if (inner instanceof ActionMode.Callback2) {
+                ((ActionMode.Callback2) inner).onGetContentRect(mode, view, outRect);
+            } else {
+                super.onGetContentRect(mode, view, outRect);
+            }
+        }
+    }
+
     /** Called from the reader page when you select text. */
     private class Bridge {
+        @JavascriptInterface
+        public void copy(String text) {
+            runOnUiThread(() -> {
+                ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                if (cm != null) cm.setPrimaryClip(ClipData.newPlainText("Nikkan", text));
+            });
+        }
+
+        @JavascriptInterface
+        public void speak(String text) {
+            runOnUiThread(() -> {
+                if (alive()) speaker.speak(text, Tts.DEFAULT_VOICE);
+            });
+        }
+
+        @JavascriptInterface
+        public void stopSpeaking() {
+            runOnUiThread(() -> {
+                if (alive()) speaker.stop();
+            });
+        }
+
         @JavascriptInterface
         public void translate(int id, String text) {
             final String target = SettingsActivity.translateTo(MainActivity.this);
@@ -145,7 +240,14 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onPause() {
+        if (speaker != null) speaker.stop();
+        super.onPause();
+    }
+
+    @Override
     protected void onDestroy() {
+        if (speaker != null) speaker.shutdown();
         handler.removeCallbacksAndMessages(null);
         if (authWeb != null) authWeb.destroy();
         authWeb = null;
@@ -162,6 +264,7 @@ public class MainActivity extends Activity {
         shownDate = today;
         readerShown = false;
         cleanUp(today);
+        speaker.clearCache();
 
         if (isReady(today)) {
             showArticle(today);
