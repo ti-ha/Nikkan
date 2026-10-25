@@ -21,7 +21,8 @@ android {
 
     packaging {
         resources {
-            excludes += ["META-INF/LICENSE*", "META-INF/NOTICE*", "META-INF/DEPENDENCIES"]
+            // Kuromoji's two jars both carry these text files; they aren't needed in the app.
+            excludes += ["META-INF/*.md", "META-INF/LICENSE*", "META-INF/NOTICE*", "META-INF/DEPENDENCIES"]
         }
     }
 }
