@@ -14,6 +14,7 @@ import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.RadioGroup;
 import android.widget.Spinner;
+import android.widget.Switch;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -65,6 +66,13 @@ public class SettingsActivity extends Activity {
             {"my", "မြန်မာ", "Burmese"},
             {"mn", "Монгол", "Mongolian"},
     };
+
+    private static final String KEY_DAILY_FONT = "daily_font";
+
+    /** "A different font each day" (off by default). */
+    public static boolean dailyFont(Context c) {
+        return c.getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_DAILY_FONT, false);
+    }
 
     public static String translateTo(Context c) {
         return c.getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_LANG, "en");
@@ -170,6 +178,32 @@ public class SettingsActivity extends Activity {
             prefs.edit().putString(KEY_MODE, m).apply();
             setLevelVisible(FURI_WK.equals(m), hintView);
         });
+
+        // A different font each day
+        TextView fh = heading("Reading");
+        fh.setPadding(0, dp(28), 0, dp(4));
+        root.addView(fh);
+
+        Switch font = new Switch(this);
+        font.setText("A different font each day");
+        font.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
+        font.setMinHeight(dp(52));
+        font.setChecked(dailyFont(this));
+        font.setOnCheckedChangeListener((b, on) ->
+                prefs.edit().putBoolean(KEY_DAILY_FONT, on).apply());
+        root.addView(font);
+
+        StringBuilder styles = new StringBuilder();
+        for (String[] f : Fonts.FONTS) {
+            if (styles.length() > 0) styles.append(", ");
+            styles.append(f[1].toLowerCase(java.util.Locale.ROOT));
+        }
+        TextView fontHint = new TextView(this);
+        fontHint.setText("See the same kanji in different styles, so you don't get used to just one. "
+                + "Rotates through ten open-source fonts: " + styles + ".");
+        fontHint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        fontHint.setAlpha(0.6f);
+        root.addView(fontHint);
 
         // Translation language
         TextView th = heading("Translate selected text into");

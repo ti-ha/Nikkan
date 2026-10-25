@@ -80,7 +80,19 @@ final class Pages {
     // ---- Reader ------------------------------------------------------------
 
     static String reader(String content, boolean dark, String furiganaCall) {
-        return HEAD + "<style>" + vars(dark)
+        return reader(content, dark, furiganaCall, null);
+    }
+
+    /** fontFamily: today's font (its font.css sits next to the article), or null for the normal one. */
+    static String reader(String content, boolean dark, String furiganaCall, String fontFamily) {
+        String font = fontFamily == null ? ""
+                : "<link rel='stylesheet' href='" + Fonts.CSS_FILE + "'><style>"
+                + "html body,html body h1{font-family:'" + fontFamily.replace("'", "")
+                + "','Noto Serif CJK JP',serif;}"
+                // Fonts here come in one weight; faux-bold smears brush and pixel styles.
+                + "html body h1{font-weight:normal;font-size:28px;}"
+                + ".dt .fn{opacity:.8;}</style>";
+        return HEAD + font + "<style>" + vars(dark)
                 + "html,body{margin:0;background:var(--bg);color:var(--fg);}"
                 + "body{font-family:'Noto Serif CJK JP','Noto Serif JP',serif;font-size:21px;line-height:2.1;"
                 + "-webkit-text-size-adjust:100%;}"
@@ -184,7 +196,14 @@ final class Pages {
                 + "document.addEventListener('click',function(e){"
                 + "if(isl.className.indexOf('on')<0||isl.contains(e.target))return;hideIsland();});"
                 + furiganaCall + ";"
+                + (fontFamily == null ? "" : "(function(){var d=document.querySelector('.dt');if(d){"
+                + "var s=document.createElement('span');s.className='fn';s.textContent=' · '+"
+                + escapeJs(fontFamily) + ";d.appendChild(s);}})();")
                 + "</script></body></html>";
+    }
+
+    private static String escapeJs(String s) {
+        return "'" + s.replace("\\", "\\\\").replace("'", "\\'") + "'";
     }
 
     private static String escape(String s) {

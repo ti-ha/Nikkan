@@ -66,6 +66,8 @@ public class MainActivity extends Activity {
     private WebView web;
     private WebView authWeb;
     private Speaker speaker;
+    /** Font family the reader is currently drawn in (null = the normal font). */
+    private String renderedFont = null;
     private Runnable afterSignIn;
     private String shownDate = null;
     private boolean readerShown = false;
@@ -235,6 +237,7 @@ public class MainActivity extends Activity {
             start();
         } else if (readerShown) {
             applyFurigana(); // settings may have changed
+            refreshFont();
             web.evaluateJavascript("window.last=''", null); // re-translate in a newly chosen language
         }
     }
@@ -268,7 +271,11 @@ public class MainActivity extends Activity {
 
         if (isReady(today)) {
             showArticle(today);
-            signInThen(() -> WORK.submit(() -> prepareQuietly(tomorrow)));
+            refreshFont();
+            signInThen(() -> WORK.submit(() -> {
+                prepareQuietly(tomorrow);
+                ensureFont(tomorrow);
+            }));
             return;
         }
 
@@ -277,10 +284,15 @@ public class MainActivity extends Activity {
         signInThen(() -> WORK.submit(() -> {
             try {
                 prepare(today, this::progress);
+                if (SettingsActivity.dailyFont(this) && !Fonts.has(dayDir(today))) {
+                    progress(1f, "今日のフォントを準備しています", "Getting today's font");
+                    ensureFont(today);
+                }
                 runOnUiThread(() -> {
                     if (alive() && today.equals(shownDate)) showArticle(today);
                 });
                 prepareQuietly(tomorrow);
+                ensureFont(tomorrow);
             } catch (Exception e) {
                 runOnUiThread(() -> {
                     if (alive() && today.equals(shownDate)) showError(e);
@@ -386,6 +398,70 @@ public class MainActivity extends Activity {
         }
     }
 
+    // ---- A different font each day ------------------------------------------------
+
+    /** The font for a date: picked once at random, never the same as the day before. */
+    private String fontFor(String date) {
+        SharedPreferences prefs = prefs();
+        String chosen = prefs.getString("font_" + date, null);
+        if (chosen != null) return chosen;
+        String yesterday = prefs.getString("font_" + shiftDate(date, -1), "");
+        String tomorrow = prefs.getString("font_" + shiftDate(date, 1), "");
+        java.util.List<String> pool = new java.util.ArrayList<>();
+        for (String[] f : Fonts.FONTS) {
+            if (!f[0].equals(yesterday) && !f[0].equals(tomorrow)) pool.add(f[0]);
+        }
+        chosen = pool.get(new Random().nextInt(pool.size()));
+        prefs.edit().putString("font_" + date, chosen).apply();
+        return chosen;
+    }
+
+    /** Downloads the day's font if the setting is on and it isn't there yet. Runs off the UI thread. */
+    private boolean ensureFont(String date) {
+        if (!SettingsActivity.dailyFont(this) || !isReady(date)) return false;
+        if (Fonts.has(dayDir(date))) return true;
+        try {
+            Fonts.fetch(fontFor(date), dayDir(date));
+            return true;
+        } catch (Exception e) {
+            return false; // the article just shows in the normal font
+        }
+    }
+
+    /** Redraws the reader if the font it should use has changed (e.g. setting just switched on). */
+    private void refreshFont() {
+        if (!readerShown || shownDate == null) return;
+        final String date = shownDate;
+        boolean on = SettingsActivity.dailyFont(this);
+        if (!on) {
+            if (renderedFont != null) showArticle(date);
+            return;
+        }
+        if (Fonts.has(dayDir(date))) {
+            if (renderedFont == null) showArticle(date);
+            return;
+        }
+        WORK.submit(() -> {
+            if (ensureFont(date)) {
+                runOnUiThread(() -> {
+                    if (alive() && readerShown && date.equals(shownDate)) showArticle(date);
+                });
+            }
+        });
+    }
+
+    private static String shiftDate(String date, int days) {
+        try {
+            SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+            Calendar c = Calendar.getInstance();
+            c.setTime(f.parse(date));
+            c.add(Calendar.DAY_OF_YEAR, days);
+            return f.format(c.getTime());
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     /** Deletes every saved day before today (i.e. the day after you read it). */
     private void cleanUp(String today) {
         File[] days = articlesDir().listFiles();
@@ -394,7 +470,7 @@ public class MainActivity extends Activity {
             String name = d.getName().replace(".part", "");
             if (name.compareTo(today) < 0) {
                 NhkClient.deleteRecursive(d);
-                prefs().edit().remove("id_" + name).apply();
+                prefs().edit().remove("id_" + name).remove("font_" + name).apply();
             }
         }
     }
@@ -428,7 +504,8 @@ public class MainActivity extends Activity {
         loadingShown = false;
         String content = readFile(new File(dayDir(date), "content.html"));
         String base = "file://" + dayDir(date).getAbsolutePath() + "/";
-        web.loadDataWithBaseURL(base, Pages.reader(content, isDark(), furiganaScript()),
+        renderedFont = SettingsActivity.dailyFont(this) && Fonts.has(dayDir(date)) ? fontFor(date) : null;
+        web.loadDataWithBaseURL(base, Pages.reader(content, isDark(), furiganaScript(), renderedFont),
                 "text/html", "UTF-8", null);
         readerShown = true;
     }
