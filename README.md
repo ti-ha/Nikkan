@@ -9,3 +9,8 @@ iOS version coming never.
 
 ## Settings
 Furigana on/off: Android Settings → Apps → Nikkan → tap the gear (or "Additional settings in the app").
+
+## Credits
+- NHK ONE sign-in approach from [nhk-easy-task](https://github.com/nhk-news-web-easy/nhk-easy-task).
+- WaniKani kanji levels from [kanji-data](https://github.com/davidluzgouveia/kanji-data) (MIT).
+- Read-aloud connection and token code ported from [edge-tts](https://github.com/rany2/edge-tts). `EdgeToken.java` is under the LGPL-3.0, like the original.
